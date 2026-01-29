@@ -1,5 +1,7 @@
-require('dotenv').config();
-const { createClient } = require('@supabase/supabase-js');
+import dotenv from 'dotenv';
+import { createClient } from '@supabase/supabase-js';
+
+dotenv.config();
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE || process.env.SUPABASE_ANON_KEY; // Preferir service_role en backend
@@ -130,21 +132,13 @@ async function listarDeudas(userId, key) {
 }
 
 async function agregarDeuda(userId, key, item) {
-  const rec = {
-    id: item.id,
-    userId,
-    mesKey: key,
-    nombre: item.nombre || '',
-    tipoDeuda: item.tipoDeuda || 'otro',
-    montoTotal: Number(item.montoTotal) || 0,
-    pagoMensual: Number(item.pagoMensual) || 0,
-    cuotasPagadas: Number(item.cuotasPagadas) || 0,
-    cuotasTotales: Number(item.cuotasTotales) || 0,
-    tasaInteres: Number(item.tasaInteres) || 0,
-  };
+  const rec = { id: item.id, userId, mesKey: key, nombre: item.nombre || '', categoria: item.categoria || '', monto: Number(item.monto) || 0, cuotas: Number(item.cuotas) || 1, restante: Number(item.restante) || Number(item.monto) || 0 };
   const { data, error } = await supabase.from('deudas').insert(rec).select('*').limit(1);
   if (error) throw error;
-  return (data && data[0]) || rec;
+  const d = (data && data[0]) || rec;
+  const { error: errUp } = await supabase.from('deudas').update({ restante: d.monto }).eq('id', d.id).eq('userId', userId);
+  if (errUp) throw errUp;
+  return d;
 }
 
 async function actualizarDeuda(userId, id, fields) {
@@ -153,12 +147,10 @@ async function actualizarDeuda(userId, id, fields) {
   if (!current || !current[0]) return null;
   const updated = {
     nombre: fields.nombre !== undefined ? fields.nombre : current[0].nombre,
-    tipoDeuda: fields.tipoDeuda !== undefined ? fields.tipoDeuda : current[0].tipoDeuda,
-    montoTotal: fields.montoTotal !== undefined ? Number(fields.montoTotal) || 0 : current[0].montoTotal,
-    pagoMensual: fields.pagoMensual !== undefined ? Number(fields.pagoMensual) || 0 : current[0].pagoMensual,
-    cuotasPagadas: fields.cuotasPagadas !== undefined ? Number(fields.cuotasPagadas) || 0 : current[0].cuotasPagadas,
-    cuotasTotales: fields.cuotasTotales !== undefined ? Number(fields.cuotasTotales) || 0 : current[0].cuotasTotales,
-    tasaInteres: fields.tasaInteres !== undefined ? Number(fields.tasaInteres) || 0 : current[0].tasaInteres,
+    categoria: fields.categoria !== undefined ? fields.categoria : current[0].categoria,
+    monto: fields.monto !== undefined ? Number(fields.monto) || 0 : current[0].monto,
+    cuotas: fields.cuotas !== undefined ? Number(fields.cuotas) || 1 : current[0].cuotas,
+    restante: fields.restante !== undefined ? Number(fields.restante) || 0 : current[0].restante,
   };
   const { error } = await supabase.from('deudas').update(updated).eq('id', id).eq('userId', userId);
   if (error) throw error;
@@ -172,33 +164,31 @@ async function eliminarDeuda(userId, id) {
 }
 
 async function pagarCuota(userId, id, monto) {
-  const { data: rows, error: errSel } = await supabase.from('deudas').select('*').eq('id', id).eq('userId', userId).limit(1);
+  const { data: current, error: errSel } = await supabase.from('deudas').select('*').eq('id', id).eq('userId', userId).limit(1);
   if (errSel) throw errSel;
-  const d = rows && rows[0];
-  if (!d) return null;
-  const pago = monto !== undefined ? Number(monto) || 0 : (d.pagoMensual || 0);
-  const nuevasCuotas = Math.min((d.cuotasPagadas || 0) + 1, d.cuotasTotales || 0);
-  const nuevoMonto = Math.max((d.montoTotal || 0) - pago, 0);
-  const { error } = await supabase.from('deudas').update({ cuotasPagadas: nuevasCuotas, montoTotal: nuevoMonto }).eq('id', id).eq('userId', userId);
+  if (!current || !current[0]) return null;
+  const restante = Math.max(0, Number(current[0].restante) - (Number(monto) || 0));
+  const { error } = await supabase.from('deudas').update({ restante }).eq('id', id).eq('userId', userId);
   if (error) throw error;
   const { data } = await supabase.from('deudas').select('*').eq('id', id).limit(1);
   return (data && data[0]) || null;
 }
 
-// Totales
 async function calcularTotales(userId, key) {
   await ensureMonth(userId, key);
-  const ingresos = await listarIngresos(userId, key);
-  const gastos = await listarGastos(userId, key);
-  const deudas = await listarDeudas(userId, key);
-  const totalIngresos = ingresos.reduce((s, i) => s + (Number(i.monto) || 0), 0);
-  const totalGastos = gastos.reduce((s, g) => s + (Number(g.monto) || 0), 0);
-  const totalDeudas = deudas.reduce((s, d) => s + (Number(d.pagoMensual) || 0), 0);
-  const disponible = totalIngresos - totalGastos - totalDeudas;
-  return { totalIngresos, totalGastos, totalDeudas, disponible };
+  const { data: ingresosRows, error: errIng } = await supabase.from('ingresos').select('monto').eq('userId', userId).eq('mesKey', key);
+  if (errIng) throw errIng;
+  const { data: gastosRows, error: errGas } = await supabase.from('gastos').select('monto').eq('userId', userId).eq('mesKey', key);
+  if (errGas) throw errGas;
+  const { data: deudasRows, error: errDeu } = await supabase.from('deudas').select('restante').eq('userId', userId).eq('mesKey', key);
+  if (errDeu) throw errDeu;
+  const totalIngresos = (ingresosRows || []).reduce((sum, r) => sum + Number(r.monto || 0), 0);
+  const totalGastos = (gastosRows || []).reduce((sum, r) => sum + Number(r.monto || 0), 0);
+  const totalDeudasRestante = (deudasRows || []).reduce((sum, r) => sum + Number(r.restante || 0), 0);
+  return { totalIngresos, totalGastos, totalDeudasRestante };
 }
 
-module.exports = {
+export default {
   upsertUser,
   ensureMonth,
   getMonth,

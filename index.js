@@ -1,6 +1,9 @@
 import express from 'express'
 import cors from 'cors'
 import { randomUUID } from 'crypto'
+// Persistencia con SQLite
+import store from './db.js';
+
 
 const app = express()
 const PORT = process.env.PORT || 4000
@@ -24,8 +27,7 @@ process.on('unhandledRejection', (reason) => {
   console.error('Unhandled Promise Rejection:', reason);
 });
 
-// Persistencia con SQLite
-const store = require('./db');
+
 
 // Helpers
 const getMesKey = (fecha) => {
