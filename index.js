@@ -1,9 +1,9 @@
-const express = require('express');
-const cors = require('cors');
-const { randomUUID } = require('crypto');
+import express from 'express'
+import cors from 'cors'
+import { randomUUID } from 'crypto'
 
-const app = express();
-const PORT = process.env.PORT || 4000;
+const app = express()
+const PORT = process.env.PORT || 4000
 
 // Permitir CORS amplio en desarrollo (incluye Authorization y métodos no simples como PUT)
 app.use(cors({
