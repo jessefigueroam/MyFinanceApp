@@ -132,13 +132,21 @@ async function listarDeudas(userId, key) {
 }
 
 async function agregarDeuda(userId, key, item) {
-  const rec = { id: item.id, userId, mesKey: key, nombre: item.nombre || '', categoria: item.categoria || '', monto: Number(item.monto) || 0, cuotas: Number(item.cuotas) || 1, restante: Number(item.restante) || Number(item.monto) || 0 };
+  const rec = {
+    id: item.id,
+    userId,
+    mesKey: key,
+    nombre: item.nombre || '',
+    tipoDeuda: item.tipoDeuda || 'otro',
+    montoTotal: Number(item.montoTotal) || 0,
+    pagoMensual: Number(item.pagoMensual) || 0,
+    cuotasPagadas: Number(item.cuotasPagadas) || 0,
+    cuotasTotales: Number(item.cuotasTotales) || 0,
+    tasaInteres: Number(item.tasaInteres) || 0,
+  };
   const { data, error } = await supabase.from('deudas').insert(rec).select('*').limit(1);
   if (error) throw error;
-  const d = (data && data[0]) || rec;
-  const { error: errUp } = await supabase.from('deudas').update({ restante: d.monto }).eq('id', d.id).eq('userId', userId);
-  if (errUp) throw errUp;
-  return d;
+  return (data && data[0]) || rec;
 }
 
 async function actualizarDeuda(userId, id, fields) {
@@ -147,10 +155,12 @@ async function actualizarDeuda(userId, id, fields) {
   if (!current || !current[0]) return null;
   const updated = {
     nombre: fields.nombre !== undefined ? fields.nombre : current[0].nombre,
-    categoria: fields.categoria !== undefined ? fields.categoria : current[0].categoria,
-    monto: fields.monto !== undefined ? Number(fields.monto) || 0 : current[0].monto,
-    cuotas: fields.cuotas !== undefined ? Number(fields.cuotas) || 1 : current[0].cuotas,
-    restante: fields.restante !== undefined ? Number(fields.restante) || 0 : current[0].restante,
+    tipoDeuda: fields.tipoDeuda !== undefined ? fields.tipoDeuda : current[0].tipoDeuda,
+    montoTotal: fields.montoTotal !== undefined ? Number(fields.montoTotal) || 0 : current[0].montoTotal,
+    pagoMensual: fields.pagoMensual !== undefined ? Number(fields.pagoMensual) || 0 : current[0].pagoMensual,
+    cuotasPagadas: fields.cuotasPagadas !== undefined ? Number(fields.cuotasPagadas) || 0 : current[0].cuotasPagadas,
+    cuotasTotales: fields.cuotasTotales !== undefined ? Number(fields.cuotasTotales) || 0 : current[0].cuotasTotales,
+    tasaInteres: fields.tasaInteres !== undefined ? Number(fields.tasaInteres) || 0 : current[0].tasaInteres,
   };
   const { error } = await supabase.from('deudas').update(updated).eq('id', id).eq('userId', userId);
   if (error) throw error;
@@ -167,8 +177,10 @@ async function pagarCuota(userId, id, monto) {
   const { data: current, error: errSel } = await supabase.from('deudas').select('*').eq('id', id).eq('userId', userId).limit(1);
   if (errSel) throw errSel;
   if (!current || !current[0]) return null;
-  const restante = Math.max(0, Number(current[0].restante) - (Number(monto) || 0));
-  const { error } = await supabase.from('deudas').update({ restante }).eq('id', id).eq('userId', userId);
+  const row = current[0];
+  const pago = Number(monto) || Number(row.pagoMensual) || 0;
+  const nuevasCuotasPagadas = Math.min(Number(row.cuotasTotales) || 0, (Number(row.cuotasPagadas) || 0) + 1);
+  const { error } = await supabase.from('deudas').update({ cuotasPagadas: nuevasCuotasPagadas }).eq('id', id).eq('userId', userId);
   if (error) throw error;
   const { data } = await supabase.from('deudas').select('*').eq('id', id).limit(1);
   return (data && data[0]) || null;
@@ -180,11 +192,17 @@ async function calcularTotales(userId, key) {
   if (errIng) throw errIng;
   const { data: gastosRows, error: errGas } = await supabase.from('gastos').select('monto').eq('userId', userId).eq('mesKey', key);
   if (errGas) throw errGas;
-  const { data: deudasRows, error: errDeu } = await supabase.from('deudas').select('restante').eq('userId', userId).eq('mesKey', key);
+  const { data: deudasRows, error: errDeu } = await supabase.from('deudas').select('montoTotal,pagoMensual,cuotasPagadas').eq('userId', userId).eq('mesKey', key);
   if (errDeu) throw errDeu;
   const totalIngresos = (ingresosRows || []).reduce((sum, r) => sum + Number(r.monto || 0), 0);
   const totalGastos = (gastosRows || []).reduce((sum, r) => sum + Number(r.monto || 0), 0);
-  const totalDeudasRestante = (deudasRows || []).reduce((sum, r) => sum + Number(r.restante || 0), 0);
+  const totalDeudasRestante = (deudasRows || []).reduce((sum, r) => {
+    const mt = Number(r.montoTotal) || 0;
+    const pm = Number(r.pagoMensual) || 0;
+    const cp = Number(r.cuotasPagadas) || 0;
+    const restante = Math.max(0, mt - pm * cp);
+    return sum + restante;
+  }, 0);
   return { totalIngresos, totalGastos, totalDeudasRestante };
 }
 
